@@ -1,3 +1,4 @@
+"""Pygame entry point for Human-vs-AI and AI-vs-AI Checkers."""
 
 import copy
 import queue
@@ -6,7 +7,18 @@ import sys
 
 import pygame
 
-from config import *
+from config import (
+    WIDTH,
+    HEIGHT,
+    SQUARE_SIZE,
+    RED,
+    BLACK,
+    WHITE,
+    GOLD,
+    GREEN,
+    SEARCH_DEPTH
+)
+
 from game.board import Board
 from interface.renderer import Renderer
 
@@ -15,297 +27,529 @@ from ai.alpha_beta import get_best_move as alpha_beta_move
 from ai.greedy import get_best_move as greedy_move
 
 
-pygame.init()
+def main():
 
-screen = pygame.display.set_mode((WIDTH, HEIGHT + 110))
-pygame.display.set_caption("Checkers AI")
+    pygame.init()
 
-clock = pygame.time.Clock()
-font = pygame.font.SysFont("Arial", 22)
-small_font = pygame.font.SysFont("Arial", 17)
+    screen = pygame.display.set_mode(
+        (WIDTH, HEIGHT + 130)
+    )
 
-game = Board()
-renderer = Renderer(screen)
+    pygame.display.set_caption("Checkers AI")
 
-algorithm = "alpha"
+    clock = pygame.time.Clock()
 
-ai_functions = {
-    "minimax": minimax_move,
-    "alpha": alpha_beta_move,
-    "greedy": greedy_move,
-}
+    font = pygame.font.SysFont(
+        "Arial",
+        22
+    )
 
-selected = None
-legal_moves = []
-ai_stats = {}
-ai_error = None
-
-game_over = False
-winner = None
-running = True
-
-ai_results = queue.Queue()
-ai_thinking = False
-game_generation = 0
-
-
-def reset_game():
-    global game, selected, legal_moves, ai_stats
-    global ai_error, game_over, winner
-    global ai_thinking, game_generation
-
-    game_generation += 1
+    small_font = pygame.font.SysFont(
+        "Arial",
+        16
+    )
 
     game = Board()
+
+    renderer = Renderer(screen)
+
+    mode = "human"
+
+    black_algorithm = "alpha"
+    red_algorithm = "minimax"
+
+    ai_functions = {
+
+        "minimax": minimax_move,
+        "alpha": alpha_beta_move,
+        "greedy": greedy_move
+
+    }
+
     selected = None
     legal_moves = []
+
     ai_stats = {}
     ai_error = None
 
     game_over = False
     winner = None
+
+    running = True
+
+    result_queue = queue.Queue()
+
     ai_thinking = False
 
-    while True:
-        try:
-            ai_results.get_nowait()
-        except queue.Empty:
-            break
+    game_generation = 0
 
+    def reset_game():
 
-def run_ai_search(board_snapshot, search_function, depth, generation):
-    try:
-        move, stats = search_function(board_snapshot, depth)
-        ai_results.put((generation, move, stats or {}, None))
-    except Exception as exc:
-        ai_results.put((generation, None, {}, exc))
+        nonlocal game
+        nonlocal selected
+        nonlocal legal_moves
+        nonlocal ai_stats
+        nonlocal ai_error
+        nonlocal game_over
+        nonlocal winner
+        nonlocal ai_thinking
+        nonlocal game_generation
 
+        game_generation += 1
 
-def start_ai_search():
-    global ai_thinking, ai_error
+        game = Board()
 
-    if ai_thinking or game_over or game.turn != BLACK:
-        return
+        selected = None
+        legal_moves = []
 
-    board_snapshot = copy.deepcopy(game)
-    search_function = ai_functions[algorithm]
-    generation = game_generation
+        ai_stats = {}
+        ai_error = None
 
-    ai_thinking = True
-    ai_error = None
-
-    worker = threading.Thread(
-        target=run_ai_search,
-        args=(
-            board_snapshot,
-            search_function,
-            SEARCH_DEPTH,
-            generation,
-        ),
-        daemon=True,
-    )
-
-    worker.start()
-
-
-def process_ai_results():
-    global ai_thinking, ai_stats, ai_error
-
-    while True:
-        try:
-            generation, move, stats, error = ai_results.get_nowait()
-        except queue.Empty:
-            break
-
-        if generation != game_generation:
-            continue
+        game_over = False
+        winner = None
 
         ai_thinking = False
 
-        if error is not None:
-            ai_error = f"AI Error: {type(error).__name__}: {error}"
-            print(ai_error)
-            continue
+        while True:
 
-        ai_stats = stats
+            try:
+                result_queue.get_nowait()
 
-        if game_over or game.turn != BLACK:
-            continue
+            except queue.Empty:
+                break
 
-        if move is None:
-            current_winner = game.winner()
+    def worker(snapshot, search_function, depth, generation):
 
-            if current_winner is None:
-                ai_error = (
-                    "AI returned no move, but the game engine "
-                    "reports no winner. Check terminal-state handling."
+        try:
+
+            move, stats = search_function(
+                snapshot,
+                depth
+            )
+
+            result_queue.put(
+                (
+                    generation,
+                    move,
+                    stats or {},
+                    None
                 )
-                print(ai_error)
+            )
 
-            continue
+        except Exception as exc:
 
-        current_legal_moves = game.get_all_moves()
+            result_queue.put(
+                (
+                    generation,
+                    None,
+                    {},
+                    exc
+                )
+            )
 
-        if move not in current_legal_moves:
-            ai_error = "AI returned an illegal move."
-            print(ai_error)
-            continue
+    def is_ai_turn():
 
-        game.make_move(move)
+        return (
+            game.turn == BLACK
+            or mode == "ai_vs_ai"
+        )
 
+    def current_algorithm():
 
-def draw_text(text, x, y, color=WHITE, target_font=None):
-    target_font = target_font or font
-    rendered = target_font.render(str(text), True, color)
-    screen.blit(rendered, (x, y))
+        if game.turn == RED:
+            return red_algorithm
 
+        return black_algorithm
 
-def draw():
-    screen.fill((30, 30, 30))
+    def start_ai():
 
-    targets = [
-        move.end
-        for move in legal_moves
-        if selected is not None and move.start == selected
-    ]
+        nonlocal ai_thinking
+        nonlocal ai_error
 
-    renderer.draw_board(game.board, selected, targets)
+        if ai_thinking or game_over or not is_ai_turn():
+            return
 
-    if game_over:
-        status = "You won!" if winner == RED else "AI won!"
-        status_color = GREEN if winner == RED else GOLD
-    elif ai_error:
-        status = "AI paused - press R to restart"
-        status_color = (255, 100, 100)
-    elif ai_thinking:
-        status = f"AI thinking ({algorithm.upper()})..."
-        status_color = GOLD
-    else:
-        status = "Your turn"
-        status_color = WHITE
+        ai_thinking = True
+        ai_error = None
 
-    draw_text(status, 10, HEIGHT + 8, status_color)
+        search_function = ai_functions[
+            current_algorithm()
+        ]
 
-    draw_text(
-        f"AI: {algorithm.upper()} | "
-        f"Depth: {SEARCH_DEPTH} | "
-        f"Nodes: {ai_stats.get('nodes', 0)}",
-        10,
-        HEIGHT + 43,
-        GOLD,
-        small_font,
-    )
+        thread = threading.Thread(
 
-    draw_text(
-        "1: Minimax   2: Alpha-Beta   "
-        "3: Greedy   R: Restart   Esc: Quit",
-        10,
-        HEIGHT + 75,
-        WHITE,
-        small_font,
-    )
+            target=worker,
 
-    pygame.display.flip()
+            args=(
+                copy.deepcopy(game),
+                search_function,
+                SEARCH_DEPTH,
+                game_generation
+            ),
 
+            daemon=True
+        )
 
-while running:
-    clock.tick(60)
+        thread.start()
 
-    process_ai_results()
+    def draw():
 
-    if not game_over:
-        winner = game.winner()
+        screen.fill((30, 30, 30))
 
-        if winner is not None:
-            game_over = True
-            selected = None
-            legal_moves = []
+        targets = [
+            move.end
+            for move in legal_moves
+            if selected is not None
+            and move.start == selected
+        ]
 
-    if (
-        not game_over
-        and not ai_thinking
-        and not ai_error
-        and game.turn == BLACK
-    ):
-        start_ai_search()
+        renderer.draw_board(
+            game.board,
+            selected,
+            targets
+        )
 
-    for event in pygame.event.get():
+        if game_over:
 
-        if event.type == pygame.QUIT:
-            running = False
+            status = (
+                "RED wins!"
+                if winner == RED
+                else "BLACK wins!"
+            )
 
-        elif event.type == pygame.KEYDOWN:
+            status_color = (
+                GREEN
+                if winner == RED
+                else GOLD
+            )
 
-            if event.key == pygame.K_ESCAPE:
-                running = False
+        elif ai_error:
 
-            elif event.key == pygame.K_r:
-                reset_game()
+            status = "AI error - press R to restart"
+            status_color = (255, 100, 100)
 
-            elif event.key == pygame.K_1:
-                algorithm = "minimax"
+        elif ai_thinking:
 
-            elif event.key == pygame.K_2:
-                algorithm = "alpha"
+            side = (
+                "RED"
+                if game.turn == RED
+                else "BLACK"
+            )
 
-            elif event.key == pygame.K_3:
-                algorithm = "greedy"
+            status = (
+                f"{side} AI thinking "
+                f"({current_algorithm().upper()})..."
+            )
 
-        elif (
-            event.type == pygame.MOUSEBUTTONDOWN
-            and event.button == 1
-            and not game_over
-            and not ai_thinking
-            and not ai_error
-            and game.turn == RED
-        ):
+            status_color = GOLD
 
-            x, y = pygame.mouse.get_pos()
+        elif mode == "ai_vs_ai":
 
-            if y >= HEIGHT or x >= WIDTH:
-                continue
+            status = (
+                f"{'RED' if game.turn == RED else 'BLACK'} "
+                "AI to move"
+            )
 
-            row = y // SQUARE_SIZE
-            col = x // SQUARE_SIZE
-            clicked = (row, col)
+            status_color = WHITE
 
-            if selected is None:
+        else:
 
-                legal_moves = game.get_all_moves()
+            status = (
+                "Your turn"
+                if game.turn == RED
+                else "AI turn"
+            )
 
-                matching = [
-                    move for move in legal_moves
-                    if move.start == clicked
-                ]
+            status_color = WHITE
 
-                if matching:
-                    selected = clicked
+        screen.blit(
 
-            else:
+            font.render(
+                status,
+                True,
+                status_color
+            ),
 
-                matching = [
-                    move for move in legal_moves
-                    if move.start == selected
-                    and move.end == clicked
-                ]
+            (10, HEIGHT + 7)
+        )
 
-                if matching:
-                    game.make_move(matching[0])
+        info = (
+
+            f"Mode: {mode.upper()} | "
+            f"RED AI: {red_algorithm.upper()} | "
+            f"BLACK AI: {black_algorithm.upper()}"
+
+        )
+
+        screen.blit(
+
+            small_font.render(
+                info,
+                True,
+                GOLD
+            ),
+
+            (10, HEIGHT + 42)
+        )
+
+        stats_text = (
+
+            f"Depth: {SEARCH_DEPTH} | "
+            f"Nodes: {ai_stats.get('nodes', 0)} | "
+            f"Time: {ai_stats.get('time', 0):.4f}s"
+
+        )
+
+        screen.blit(
+
+            small_font.render(
+                stats_text,
+                True,
+                WHITE
+            ),
+
+            (10, HEIGHT + 66)
+        )
+
+        controls = (
+            "V: mode | 1-3: BLACK AI | "
+            "4-6: RED AI | R: restart | Esc: quit"
+        )
+
+        screen.blit(
+
+            small_font.render(
+                controls,
+                True,
+                WHITE
+            ),
+
+            (10, HEIGHT + 92)
+        )
+
+        pygame.display.flip()
+
+    try:
+
+        while running:
+
+            clock.tick(60)
+
+            # Apply completed AI work on the main thread.
+
+            while True:
+
+                try:
+
+                    (
+                        generation,
+                        move,
+                        stats,
+                        error
+                    ) = result_queue.get_nowait()
+
+                except queue.Empty:
+                    break
+
+                if generation != game_generation:
+                    continue
+
+                ai_thinking = False
+
+                if error is not None:
+
+                    ai_error = (
+                        f"{type(error).__name__}: {error}"
+                    )
+
+                    print("AI error:", repr(error))
+
+                    continue
+
+                ai_stats = stats
+
+                if game_over or not is_ai_turn():
+                    continue
+
+                if move is None:
+
+                    if game.winner() is None:
+
+                        ai_error = (
+                            "AI returned no move, "
+                            "but the position is not terminal."
+                        )
+
+                    continue
+
+                if move not in game.get_all_moves():
+
+                    ai_error = (
+                        "AI returned a move that is not legal."
+                    )
+
+                    continue
+
+                game.make_move(move)
+
+            if not game_over:
+
+                winner = game.winner()
+
+                if winner is not None:
+
+                    game_over = True
+
                     selected = None
                     legal_moves = []
 
-                else:
-                    legal_moves = game.get_all_moves()
+            if (
+                not game_over
+                and not ai_thinking
+                and not ai_error
+                and is_ai_turn()
+            ):
 
-                    matching = [
-                        move for move in legal_moves
-                        if move.start == clicked
-                    ]
+                start_ai()
 
-                    selected = clicked if matching else None
+            for event in pygame.event.get():
 
-    draw()
+                if event.type == pygame.QUIT:
 
+                    running = False
+
+                elif event.type == pygame.KEYDOWN:
+
+                    if event.key == pygame.K_ESCAPE:
+
+                        running = False
+
+                    elif event.key == pygame.K_r:
+
+                        reset_game()
+
+                    elif not ai_thinking:
+
+                        if event.key == pygame.K_v:
+
+                            mode = (
+                                "ai_vs_ai"
+                                if mode == "human"
+                                else "human"
+                            )
+
+                            selected = None
+                            legal_moves = []
+
+                        elif event.key == pygame.K_1:
+
+                            black_algorithm = "minimax"
+
+                        elif event.key == pygame.K_2:
+
+                            black_algorithm = "alpha"
+
+                        elif event.key == pygame.K_3:
+
+                            black_algorithm = "greedy"
+
+                        elif event.key == pygame.K_4:
+
+                            red_algorithm = "minimax"
+
+                        elif event.key == pygame.K_5:
+
+                            red_algorithm = "alpha"
+
+                        elif event.key == pygame.K_6:
+
+                            red_algorithm = "greedy"
+
+                elif (
+
+                    event.type == pygame.MOUSEBUTTONDOWN
+                    and event.button == 1
+                    and mode == "human"
+                    and not game_over
+                    and not ai_thinking
+                    and not ai_error
+                    and game.turn == RED
+
+                ):
+
+                    x, y = pygame.mouse.get_pos()
+
+                    if not (
+                        0 <= x < WIDTH
+                        and 0 <= y < HEIGHT
+                    ):
+
+                        continue
+
+                    clicked = (
+                        y // SQUARE_SIZE,
+                        x // SQUARE_SIZE
+                    )
+
+                    if selected is None:
+
+                        legal_moves = game.get_all_moves()
+
+                        if any(
+                            move.start == clicked
+                            for move in legal_moves
+                        ):
+
+                            selected = clicked
+
+                    else:
+
+                        matching = [
+
+                            move
+                            for move in legal_moves
+
+                            if (
+                                move.start == selected
+                                and move.end == clicked
+                            )
+
+                        ]
+
+                        if matching:
+
+                            game.make_move(matching[0])
+
+                            selected = None
+                            legal_moves = []
+
+                        else:
+
+                            legal_moves = game.get_all_moves()
+
+                            selected = (
+
+                                clicked
+                                if any(
+                                    move.start == clicked
+                                    for move in legal_moves
+                                )
+                                else None
+
+                            )
+
+            draw()
+
+    finally:
+
+        pygame.quit()
+
+    return 0
+
+
+if __name__ == "__main__":
+
+    sys.exit(main())
 
 pygame.quit()
 sys.exit()
