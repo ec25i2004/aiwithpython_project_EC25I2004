@@ -1,6 +1,6 @@
+"""Repeatable benchmark of the three AI search algorithms."""
 
-import time
-import matplotlib.pyplot as plt
+import statistics
 
 from game.board import Board
 
@@ -12,89 +12,175 @@ from ai.greedy import get_best_move as greedy
 ALGORITHMS = {
     "Minimax": minimax,
     "Alpha-Beta": alpha_beta,
-    "Greedy": greedy
+    "Greedy Best-First": greedy
 }
 
 
-def benchmark(depth=4):
+def make_positions():
 
-    game = Board()
+    """Create several deterministic legal positions."""
+
+    positions = [
+        ("initial", Board())
+    ]
+
+    board = Board()
+
+    for _ in range(6):
+
+        moves = board.get_all_moves()
+
+        if not moves:
+            break
+
+        board.make_move(moves[0])
+
+    positions.append(
+        ("after_6_plies", board.clone())
+    )
+
+    board = Board()
+
+    for _ in range(12):
+
+        moves = board.get_all_moves()
+
+        if not moves:
+            break
+
+        board.make_move(
+            moves[len(moves) // 2]
+        )
+
+    positions.append(
+        ("after_12_plies", board.clone())
+    )
+
+    return positions
+
+
+def benchmark(depth=3, trials=3):
 
     results = {}
 
-    for name, algorithm in ALGORITHMS.items():
+    for position_name, position in make_positions():
 
-        # Each algorithm receives an independent copy.
-        test_board = game.clone()
+        results[position_name] = {}
 
-        move, stats = algorithm(
-            test_board, depth
-        )
+        for algorithm_name, algorithm in ALGORITHMS.items():
 
-        results[name] = {
-            "time": stats["time"],
-            "nodes": stats["nodes"],
-            "score": stats["score"],
-            "move": move
-        }
+            times = []
+            nodes = []
+            scores = []
+            cutoffs = []
 
-        if "cutoffs" in stats:
-            results[name]["cutoffs"] = stats["cutoffs"]
+            for _ in range(trials):
 
-    print("\nALGORITHM COMPARISON\n")
+                move, stats = algorithm(
+                    position.clone(),
+                    depth
+                )
 
-    for name, data in results.items():
+                times.append(stats["time"])
+                nodes.append(stats["nodes"])
+                scores.append(stats["score"])
 
-        print(f"\n{name}")
+                if "cutoffs" in stats:
+                    cutoffs.append(stats["cutoffs"])
 
-        print("Time:", round(data["time"], 6), "seconds")
-        print("Nodes:", data["nodes"])
-        print("Score:", data["score"])
-        print("Move:", data["move"])
+            results[position_name][algorithm_name] = {
 
-        if "cutoffs" in data:
-            print("Cutoffs:", data["cutoffs"])
+                "average_time": statistics.mean(times),
+
+                "median_time": statistics.median(times),
+
+                "average_nodes": statistics.mean(nodes),
+
+                "score": scores[-1],
+
+                "move": move,
+
+                "average_cutoffs": (
+                    statistics.mean(cutoffs)
+                    if cutoffs else 0
+                )
+            }
+
+    for position_name, algorithms in results.items():
+
+        print(f"\nPOSITION: {position_name}")
+
+        for algorithm_name, data in algorithms.items():
+
+            print(
+                f"{algorithm_name:20} "
+                f"time={data['average_time']:.6f}s "
+                f"nodes={data['average_nodes']:.1f} "
+                f"score={data['score']} "
+                f"cutoffs={data['average_cutoffs']:.1f}"
+            )
 
     return results
 
 
 def plot_results(results):
 
-    names = list(results.keys())
+    import matplotlib.pyplot as plt
 
-    times = [
-        results[name]["time"]
-        for name in names
-    ]
+    names = list(ALGORITHMS)
+    positions = list(results)
 
-    nodes = [
-        results[name]["nodes"]
-        for name in names
-    ]
+    for metric, title, ylabel, filename in (
 
-    plt.figure()
+        (
+            "average_time",
+            "Average Execution Time",
+            "Seconds",
+            "execution_time.png"
+        ),
 
-    plt.bar(names, times)
+        (
+            "average_nodes",
+            "Average Nodes Explored",
+            "Nodes",
+            "explored_nodes.png"
+        )
 
-    plt.title("Algorithm Execution Time")
-    plt.ylabel("Time (seconds)")
+    ):
 
-    plt.savefig("execution_time.png")
-    plt.show()
+        for position in positions:
 
-    plt.figure()
+            values = [
+                results[position][name][metric]
+                for name in names
+            ]
 
-    plt.bar(names, nodes)
+            plt.figure()
 
-    plt.title("Algorithm Node Exploration")
-    plt.ylabel("Nodes explored")
+            plt.bar(names, values)
 
-    plt.savefig("explored_nodes.png")
-    plt.show()
+            plt.title(
+                f"{title} - {position}"
+            )
+
+            plt.ylabel(ylabel)
+
+            plt.xticks(rotation=15)
+
+            plt.tight_layout()
+
+            plt.savefig(
+                f"{position}_{filename}"
+            )
+
+            plt.close()
 
 
 if __name__ == "__main__":
 
-    results = benchmark(depth=4)
+    benchmark_results = benchmark(
+        depth=3,
+        trials=3
+    )
 
-    plot_results(results)
+    plot_results(benchmark_results)
