@@ -1,8 +1,9 @@
+"""Minimax with Alpha-Beta pruning."""
 
 import time
 
-from game.moves import get_valid_moves
 from game.rules import get_winner
+from game.moves import get_valid_moves
 from ai.evaluation import evaluate
 
 
@@ -18,45 +19,36 @@ def alpha_beta(
 
     stats["nodes"] += 1
 
-    winner = get_winner(board, board.turn)
+    winner = get_winner(board.board, board.turn)
 
-    if depth == 0 or winner is not None:
+    if winner is not None:
 
         if winner == player:
             return 100000 + depth, None
 
-        if winner == -player:
-            return -100000 - depth, None
+        return -100000 - depth, None
 
-        if winner is not None:
-            return 0, None
-
+    if depth == 0:
         return evaluate(board.board, player), None
 
-    moves = get_valid_moves(
-        board.board,
-        board.turn
-    )
+    moves = get_valid_moves(board.board, board.turn)
 
     if not moves:
-        return (
-            -100000 if maximizing else 100000,
-            None
-        )
+        return (-100000 if maximizing else 100000), None
 
     best_move = None
 
     if maximizing:
 
-        max_eval = float("-inf")
+        best_score = float("-inf")
 
         for move in moves:
 
-            new_board = board.clone()
-            new_board.make_move(move)
+            child = board.clone()
+            child.make_move(move)
 
             score, _ = alpha_beta(
-                new_board,
+                child,
                 depth - 1,
                 alpha,
                 beta,
@@ -65,48 +57,46 @@ def alpha_beta(
                 stats
             )
 
-            if score > max_eval:
-                max_eval = score
+            if score > best_score:
+                best_score = score
                 best_move = move
 
-            alpha = max(alpha, max_eval)
+            alpha = max(alpha, best_score)
 
             if beta <= alpha:
                 stats["cutoffs"] += 1
                 break
 
-        return max_eval, best_move
+        return best_score, best_move
 
-    else:
+    best_score = float("inf")
 
-        min_eval = float("inf")
+    for move in moves:
 
-        for move in moves:
+        child = board.clone()
+        child.make_move(move)
 
-            new_board = board.clone()
-            new_board.make_move(move)
+        score, _ = alpha_beta(
+            child,
+            depth - 1,
+            alpha,
+            beta,
+            True,
+            player,
+            stats
+        )
 
-            score, _ = alpha_beta(
-                new_board,
-                depth - 1,
-                alpha,
-                beta,
-                True,
-                player,
-                stats
-            )
+        if score < best_score:
+            best_score = score
+            best_move = move
 
-            if score < min_eval:
-                min_eval = score
-                best_move = move
+        beta = min(beta, best_score)
 
-            beta = min(beta, min_eval)
+        if beta <= alpha:
+            stats["cutoffs"] += 1
+            break
 
-            if beta <= alpha:
-                stats["cutoffs"] += 1
-                break
-
-        return min_eval, best_move
+    return best_score, best_move
 
 
 def get_best_move(board, depth=4):
@@ -128,9 +118,7 @@ def get_best_move(board, depth=4):
         stats
     )
 
-    elapsed = time.perf_counter() - start
-
-    stats["time"] = elapsed
+    stats["time"] = time.perf_counter() - start
     stats["score"] = score
 
     return move, stats
