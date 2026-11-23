@@ -1,65 +1,81 @@
+"""Heuristic-prioritised Greedy Best-First Search."""
 
 import heapq
 import itertools
 import time
 
-from game.moves import get_valid_moves
 from game.rules import get_winner
+from game.moves import get_valid_moves
 from ai.evaluation import evaluate
+
+
+def _position_score(board, root_player, depth_remaining):
+
+    winner = get_winner(board.board, board.turn)
+
+    if winner == root_player:
+        return 100000 + depth_remaining
+
+    if winner == -root_player:
+        return -100000 - depth_remaining
+
+    if winner is not None:
+        return 0
+
+    return evaluate(board.board, root_player)
 
 
 def greedy_search(board, depth=4):
 
     stats = {"nodes": 0}
 
-    player = board.turn
+    root_player = board.turn
+    sequence = itertools.count()
 
-    counter = itertools.count()
+    # Heap item:
+    # (-heuristic score, tie breaker, state, first move, level)
 
-    # Priority queue: (priority, sequence, state, first_move, depth)
-    queue = []
+    frontier = []
+
+    root_score = _position_score(
+        board,
+        root_player,
+        depth
+    )
 
     heapq.heappush(
-        queue,
+        frontier,
         (
-            -evaluate(board.board, player),
-            next(counter),
+            -root_score,
+            next(sequence),
             board.clone(),
             None,
             0
         )
     )
 
-    best_move = None
-    best_score = float("-inf")
+    while frontier:
 
-    while queue:
-
-        _, _, current, first_move, level = heapq.heappop(queue)
+        _, _, current, first_move, level = heapq.heappop(frontier)
 
         stats["nodes"] += 1
 
-        winner = get_winner(current.board, current.turn)
+        winner = get_winner(
+            current.board,
+            current.turn
+        )
 
-        if winner is not None or level == depth:
+        if winner is not None or level >= depth:
 
-            if winner == player:
-                score = 100000 + (depth - level)
+            score = _position_score(
+                current,
+                root_player,
+                depth - level
+            )
 
-            elif winner == -player:
-                score = -100000 - (depth - level)
+            stats["score"] = score
 
-            elif winner is not None:
-                score = 0
-
-            else:
-                score = evaluate(current.board, player)
-
-            if first_move is not None and score > best_score:
-                best_score = score
-                best_move = first_move
-
-            continue
+            return first_move, stats
 
         moves = get_valid_moves(
             current.board,
@@ -68,33 +84,37 @@ def greedy_search(board, depth=4):
 
         for move in moves:
 
-            new_board = current.clone()
-            new_board.make_move(move)
+            child = current.clone()
+            child.make_move(move)
 
             root_move = (
                 move if first_move is None else first_move
             )
 
-            heuristic = evaluate(
-                new_board.board,
-                player
+            heuristic = _position_score(
+                child,
+                root_player,
+                depth - level - 1
             )
 
             heapq.heappush(
-                queue,
+                frontier,
                 (
                     -heuristic,
-                    next(counter),
-                    new_board,
+                    next(sequence),
+                    child,
                     root_move,
                     level + 1
                 )
             )
 
-    return best_move, {
-        **stats,
-        "score": best_score
-    }
+    stats["score"] = _position_score(
+        board,
+        root_player,
+        depth
+    )
+
+    return None, stats
 
 
 def get_best_move(board, depth=4):
